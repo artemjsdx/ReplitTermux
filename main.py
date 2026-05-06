@@ -5,15 +5,15 @@ D: All dependencies constructed here and injected into consumers.
 """
 import threading, time
 
-from .installer  import ensure_dependencies
+from installer  import ensure_dependencies
 ensure_dependencies()   # must run before any rich/flask imports
 
-from .config     import PORT, TOKEN, CMD_TIMEOUT, MAX_HISTORY, TUNNEL_KEEPALIVE
-from .history    import CommandHistory
-from .executor   import ShellExecutor
-from .api_routes import create_app
-from .tunnel     import BridgeTunnel
-from .display    import (
+from config     import PORT, TOKEN, CMD_TIMEOUT, MAX_HISTORY, TUNNEL_KEEPALIVE
+from history    import CommandHistory
+from executor   import ShellExecutor
+from api_routes import create_app
+from tunnel     import BridgeTunnel
+from display    import (
     console, print_startup, print_connection_info,
     print_error, print_status_table,
 )
