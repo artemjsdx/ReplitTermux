@@ -4,7 +4,7 @@ S: One responsibility — run shell commands and return structured results.
 I: Executor protocol can be swapped (e.g., for sandboxed execution).
 """
 import os, subprocess, time
-from .history import CommandRecord
+from history import CommandRecord
 
 
 class ShellExecutor:
