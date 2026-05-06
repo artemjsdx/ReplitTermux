@@ -2,37 +2,27 @@
 display.py — Terminal output / UI rendering.
 S: One responsibility — all Rich-based terminal presentation.
 
-Mobile-friendly rules:
-  - Labels via Rich (short, coloured).
-  - Raw data (URL, token, output lines) via plain print() — bypasses Rich width-wrap.
-  - No alignment padding.
+Mobile-friendly: plain print() + ANSI, no Rich width calculations.
 """
-from rich.console import Console
-from rich.rule    import Rule
-from rich.table   import Table
-from rich         import box as rbox
-from history      import CommandRecord
+from history import CommandRecord
 
-console = Console()
-
-_O = "\033[0m"          # reset
-_B = "\033[1m"          # bold
-_DIM = "\033[2m"        # dim
-_CYA = "\033[96m"       # bright cyan
-_GRN = "\033[92m"       # bright green
-_RED = "\033[91m"       # bright red
-_ORG = "\033[38;5;208m" # orange
+_O   = "\033[0m"
+_B   = "\033[1m"
+_DIM = "\033[2m"
+_CYA = "\033[96m"
+_GRN = "\033[92m"
+_RED = "\033[91m"
+_ORG = "\033[38;5;208m"
 
 
 def _hr(label: str = "") -> None:
-    """Print a plain separator line with optional label."""
     if label:
         print(f"{_ORG}── {label} ──{_O}")
     else:
         print(f"{_DIM}{'─' * 32}{_O}")
 
 
-# ── startup header ─────────────────────────────────────────────────────────────
+# ── startup ────────────────────────────────────────────────────────────────────
 def print_startup(port: int) -> None:
     _hr("ReplitTermux v3.0")
     print(f"{_DIM}server : localhost:{port}{_O}")
@@ -41,7 +31,7 @@ def print_startup(port: int) -> None:
     print()
 
 
-# ── connection info ─────────────────────────────────────────────────────────────
+# ── полные данные (когда TG не настроен) ───────────────────────────────────────
 def print_connection_info(url: str, token: str) -> None:
     print()
     _hr("✓ Мост готов")
@@ -57,7 +47,16 @@ def print_connection_info(url: str, token: str) -> None:
     print()
 
 
-# ── command result ──────────────────────────────────────────────────────────────
+# ── краткий статус (когда TG настроен) ────────────────────────────────────────
+def print_bridge_ready() -> None:
+    print()
+    _hr("✓ Мост готов")
+    print(f"{_GRN}Данные отправлены в Telegram.{_O}")
+    _hr()
+    print()
+
+
+# ── результат команды ──────────────────────────────────────────────────────────
 def print_result(r: CommandRecord) -> None:
     color = _GRN if r.code == 0 else _RED
     icon  = "✓"  if r.code == 0 else "✗"
@@ -71,7 +70,7 @@ def print_result(r: CommandRecord) -> None:
     print()
 
 
-# ── periodic status ─────────────────────────────────────────────────────────────
+# ── периодический статус ───────────────────────────────────────────────────────
 def print_status_table(records: list[CommandRecord]) -> None:
     if not records:
         return
@@ -82,6 +81,6 @@ def print_status_table(records: list[CommandRecord]) -> None:
     print()
 
 
-# ── error helper ───────────────────────────────────────────────────────────────
+# ── ошибка ─────────────────────────────────────────────────────────────────────
 def print_error(msg: str) -> None:
     print(f"{_RED}✗ {msg}{_O}")
