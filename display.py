@@ -2,7 +2,10 @@
 display.py — Terminal output / UI rendering.
 S: One responsibility — all Rich-based terminal presentation.
 
-Mobile-friendly: no alignment padding, no long wrapping lines.
+Mobile-friendly rules:
+  - Labels via Rich (short, coloured).
+  - Raw data (URL, token, output lines) via plain print() — bypasses Rich width-wrap.
+  - No alignment padding.
 """
 from rich.console import Console
 from rich.rule    import Rule
@@ -12,63 +15,73 @@ from history      import CommandRecord
 
 console = Console()
 
+_O = "\033[0m"          # reset
+_B = "\033[1m"          # bold
+_DIM = "\033[2m"        # dim
+_CYA = "\033[96m"       # bright cyan
+_GRN = "\033[92m"       # bright green
+_RED = "\033[91m"       # bright red
+_ORG = "\033[38;5;208m" # orange
+
+
+def _hr(label: str = "") -> None:
+    """Print a plain separator line with optional label."""
+    if label:
+        print(f"{_ORG}── {label} ──{_O}")
+    else:
+        print(f"{_DIM}{'─' * 32}{_O}")
+
 
 # ── startup header ─────────────────────────────────────────────────────────────
 def print_startup(port: int) -> None:
-    console.print(Rule("[bold #ff8c00]ReplitTermux v3.0[/bold #ff8c00]"))
-    console.print(f"[dim]server : localhost:{port}[/dim]")
-    console.print(f"[dim]tunnel : serveo.net...[/dim]")
-    console.print(f"[dim]stop   : Ctrl+C[/dim]")
-    console.print()
+    _hr("ReplitTermux v3.0")
+    print(f"{_DIM}server : localhost:{port}{_O}")
+    print(f"{_DIM}tunnel : serveo.net...{_O}")
+    print(f"{_DIM}stop   : Ctrl+C{_O}")
+    print()
 
 
 # ── connection info ─────────────────────────────────────────────────────────────
 def print_connection_info(url: str, token: str) -> None:
-    console.print()
-    console.print(Rule("[bold #ff8c00]✓ Мост готов[/bold #ff8c00]"))
-    console.print(f"[dim]URL[/dim]")
-    console.print(f"[bold cyan]{url}[/bold cyan]")
-    console.print()
-    console.print(f"[dim]Token[/dim]")
-    console.print(f"[bold #3fb950]{token}[/bold #3fb950]")
-    console.print()
-    console.print(f"[dim]Web → {url}/?token={token}[/dim]")
-    console.print(Rule(style="dim"))
-    console.print()
+    print()
+    _hr("✓ Мост готов")
+    print(f"{_DIM}URL:{_O}")
+    print(f"{_CYA}{_B}{url}{_O}")
+    print()
+    print(f"{_DIM}Token:{_O}")
+    print(f"{_GRN}{_B}{token}{_O}")
+    print()
+    print(f"{_DIM}Web:{_O}")
+    print(f"{_DIM}{url}/?token={token}{_O}")
+    _hr()
+    print()
 
 
 # ── command result ──────────────────────────────────────────────────────────────
 def print_result(r: CommandRecord) -> None:
-    color = "#3fb950" if r.code == 0 else "#f85149"
-    icon  = "✓"       if r.code == 0 else "✗"
-    console.print(f"[bold #ff8c00]▶[/bold #ff8c00] [bold]{r.cmd}[/bold]")
+    color = _GRN if r.code == 0 else _RED
+    icon  = "✓"  if r.code == 0 else "✗"
+    print(f"{_ORG}▶{_O} {_B}{r.cmd}{_O}")
     if r.out:
         for line in r.out[:2000].splitlines():
-            console.print(f"  {line}")
+            print(f"  {line}")
         if len(r.out) > 2000:
-            console.print("  [dim]...[/dim]")
-    console.print(f"[{color}]{icon} EXIT {r.code}[/{color}] [dim]({r.elapsed}s)[/dim]")
-    console.print()
+            print("  ...")
+    print(f"{color}{icon} EXIT {r.code}{_O}  {_DIM}({r.elapsed}s){_O}")
+    print()
 
 
 # ── periodic status ─────────────────────────────────────────────────────────────
 def print_status_table(records: list[CommandRecord]) -> None:
     if not records:
         return
-    t = Table(
-        box=rbox.SIMPLE, show_header=True,
-        header_style="bold #ff8c00", show_edge=False,
-        pad_edge=False,
-    )
-    t.add_column("Time", width=8, style="dim")
-    t.add_column("Cmd",  max_width=20, style="bold", no_wrap=True)
-    t.add_column("RC",   width=3)
+    _hr("история")
     for h in reversed(records):
-        icon = "[#3fb950]✓[/#3fb950]" if h.code == 0 else "[#f85149]✗[/#f85149]"
-        t.add_row(h.ts, h.cmd[:20], f"{icon}{h.code}")
-    console.print(t)
+        icon = f"{_GRN}✓{_O}" if h.code == 0 else f"{_RED}✗{_O}"
+        print(f"  {_DIM}{h.ts}{_O}  {icon}  {h.cmd[:30]}")
+    print()
 
 
 # ── error helper ───────────────────────────────────────────────────────────────
 def print_error(msg: str) -> None:
-    console.print(f"[red]✗ {msg}[/red]")
+    print(f"{_RED}✗ {msg}{_O}")
