@@ -15,12 +15,11 @@ from api_routes import create_app
 from tunnel     import BridgeTunnel
 from telegram   import send_bridge_notifications, normalize_chat_id
 from display    import (
-    print_startup, print_connection_info,
+    print_startup, print_connection_info, print_bridge_ready,
     print_error, print_status_table,
 )
 
 _O   = "\033[0m"
-_B   = "\033[1m"
 _DIM = "\033[2m"
 _GRN = "\033[92m"
 _ORG = "\033[38;5;208m"
@@ -28,17 +27,11 @@ _ORG = "\033[38;5;208m"
 
 def _ask(prompt: str, secret: bool = False) -> str:
     print(f"{_ORG}{prompt}{_O}", end=" ", flush=True)
-    if secret:
-        return getpass.getpass("")
-    return input()
+    return getpass.getpass("") if secret else input()
 
 
 def _ask_telegram() -> tuple[str, str] | tuple[None, None]:
-    """
-    Запрашивает токен бота и chat_id.
-    Если оба пустые — Telegram-уведомления пропускаются.
-    """
-    print(f"\n{_DIM}── Telegram-уведомления ──────────────────{_O}")
+    print(f"{_DIM}── Telegram-уведомления ──────────────────{_O}")
     print(f"{_DIM}(Enter чтобы пропустить){_O}\n")
 
     bot_token = _ask("Bot token:", secret=True).strip()
@@ -46,7 +39,7 @@ def _ask_telegram() -> tuple[str, str] | tuple[None, None]:
         print(f"{_DIM}Telegram пропущен.{_O}\n")
         return None, None
 
-    chat_id_raw = _ask("Chat ID (например: 123456789 или -100...):")
+    chat_id_raw = _ask("Chat ID:")
     if not chat_id_raw.strip():
         print(f"{_DIM}Telegram пропущен.{_O}\n")
         return None, None
@@ -70,7 +63,6 @@ def main() -> None:
     executor = ShellExecutor(timeout=CMD_TIMEOUT)
     app      = create_app(executor, history)
 
-    # ── Flask in background thread ──────────────────────────────────────────────
     threading.Thread(
         target=lambda: app.run(
             host="0.0.0.0", port=PORT, debug=False,
@@ -80,22 +72,27 @@ def main() -> None:
     ).start()
     time.sleep(0.4)
 
-    # ── Tunnel ─────────────────────────────────────────────────────────────────
     def _on_url(url: str) -> None:
-        clean_url = url.rstrip("/")
-        print_connection_info(clean_url, TOKEN)
+        clean = url.rstrip("/")
 
         if tg_token and tg_chat:
+            # Данные идут в Telegram — в терминале только краткий статус
             print(f"{_DIM}Отправляю в Telegram...{_O}")
-            ok, err = send_bridge_notifications(tg_token, tg_chat, clean_url, TOKEN)
+            ok, err = send_bridge_notifications(tg_token, tg_chat, clean, TOKEN)
             if ok:
-                print(f"{_GRN}✓ Telegram: 2 сообщения отправлены{_O}\n")
+                print(f"{_GRN}✓ Telegram: 2 сообщения отправлены{_O}")
             else:
-                print(f"\033[91m✗ Telegram: {err}{_O}\n")
+                print(f"\033[91m✗ Telegram: {err}{_O}")
+                # Если TG не сработал — показываем данные в терминале как fallback
+                print_connection_info(clean, TOKEN)
+                return
+            print_bridge_ready()
+        else:
+            # TG не настроен — показываем всё в терминале
+            print_connection_info(clean, TOKEN)
 
     BridgeTunnel(PORT, _on_url).start_async()
 
-    # ── Keep-alive loop (main thread) ───────────────────────────────────────────
     try:
         while True:
             time.sleep(TUNNEL_KEEPALIVE)
