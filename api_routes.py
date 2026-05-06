@@ -9,11 +9,11 @@ import time
 
 from flask import Flask, request, jsonify
 
-from .config   import TOKEN
-from .executor import ShellExecutor
-from .history  import CommandHistory, CommandRecord
-from .display  import print_result
-from .web_ui   import render_web_ui
+from config   import TOKEN
+from executor import ShellExecutor
+from history  import CommandHistory, CommandRecord
+from display  import print_result
+from web_ui   import render_web_ui
 
 
 def _auth_ok() -> bool:
