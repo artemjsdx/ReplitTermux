@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.rule   import Rule
 from rich.table  import Table
 from rich        import box as rbox
-from .history    import CommandRecord
+from history     import CommandRecord
 
 console = Console()
 
