@@ -2,7 +2,7 @@
 web_ui.py — HTML web interface template.
 S: One responsibility — generate the browser-based control panel HTML.
 """
-from .history import CommandRecord
+from history import CommandRecord
 
 
 def render_web_ui(token: str, history: list[CommandRecord]) -> str:
