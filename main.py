@@ -1,4 +1,4 @@
-import os, sys, threading, time, getpass, subprocess
+import os, sys, signal, threading, time, getpass, subprocess
 from pathlib import Path
 
 from installer    import ensure_dependencies
@@ -21,9 +21,13 @@ _BRIDGE_DIR = Path(__file__).parent.resolve()
 _O   = "\033[0m"
 _DIM = "\033[2m"
 _GRN = "\033[92m"
-_YEL = "\033[93m"
 _RED = "\033[91m"
 _ORG = "\033[38;5;208m"
+
+# Глобальный реестр дочерних процессов для cleanup
+_watchdog_proc: "subprocess.Popen | None" = None
+_tunnel_proc:   "subprocess.Popen | None" = None
+_shutdown_event = threading.Event()
 
 
 def _ask(prompt, secret=False):
@@ -70,31 +74,87 @@ def _ask_telegram():
 
 
 def _start_watchdog_background():
-    """Запускает watchdog.py как независимый фоновый процесс."""
+    """Запускает watchdog.py как независимый процесс (отвязан от терминала)."""
+    global _watchdog_proc
     wd = _BRIDGE_DIR / "watchdog.py"
     if not wd.exists():
         return
+    # Убиваем предыдущий watchdog
     subprocess.run(
-        "pkill -f \"python.*watchdog\\.py\" 2>/dev/null; pkill -f \"python3.*watchdog\\.py\" 2>/dev/null",
+        "pkill -f \"python.*watchdog\\.py\" 2>/dev/null;"
+        " pkill -f \"python3.*watchdog\\.py\" 2>/dev/null",
         shell=True,
     )
-    time.sleep(0.5)
+    time.sleep(0.4)
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["RT_NONINTERACTIVE"] = "1"
-    log_handle = open(str(_BRIDGE_DIR / "watchdog.log"), "a", encoding="utf-8")
-    subprocess.Popen(
+    _watchdog_proc = subprocess.Popen(
         [sys.executable, str(wd)],
         cwd=str(_BRIDGE_DIR),
         env=env,
-        stdout=log_handle,
+        stdout=open(str(_BRIDGE_DIR / "watchdog.log"), "a", encoding="utf-8"),
         stderr=subprocess.STDOUT,
         start_new_session=True,
         close_fds=True,
     )
 
 
+def _cleanup(signum=None, frame=None):
+    """Корректное завершение: убиваем watchdog, туннель, освобождаем порт."""
+    if _shutdown_event.is_set():
+        return   # уже выполняется
+    _shutdown_event.set()
+    print("\n{}Завершение...{}".format(_DIM, _O))
+
+    # 1. Останавливаем watchdog — иначе он перезапустит мост
+    subprocess.run(
+        "pkill -f \"python.*watchdog\\.py\" 2>/dev/null;"
+        " pkill -f \"python3.*watchdog\\.py\" 2>/dev/null",
+        shell=True,
+    )
+    if _watchdog_proc is not None:
+        try:
+            _watchdog_proc.terminate()
+        except Exception:
+            pass
+
+    # 2. Убиваем туннель (serveo ssh-процесс)
+    subprocess.run("pkill -f \"ssh.*serveo\" 2>/dev/null", shell=True)
+    if _tunnel_proc is not None:
+        try:
+            _tunnel_proc.terminate()
+        except Exception:
+            pass
+
+    # 3. Освобождаем порт принудительно
+    subprocess.run(
+        "fuser -k {}/tcp 2>/dev/null".format(PORT),
+        shell=True,
+    )
+
+    # 4. Удаляем bridge_url.txt чтобы watchdog не думал что мост жив
+    try:
+        (_BRIDGE_DIR / "bridge_url.txt").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    print("{}✓ Мост остановлен, порт {} освобождён.{}\n".format(_GRN, PORT, _O))
+    sys.exit(0)
+
+
 def main():
+    # Регистрируем обработчики сигналов
+    signal.signal(signal.SIGINT,  _cleanup)   # Ctrl+C
+    signal.signal(signal.SIGTERM, _cleanup)   # kill / watchdog SIGTERM
+    # SIGTSTP (Ctrl+Z) — показываем предупреждение вместо suspend
+    try:
+        signal.signal(signal.SIGTSTP, lambda s, f: print(
+            "\n{}Ctrl+Z отключён — используй Ctrl+C для остановки.{}".format(_ORG, _O)
+        ))
+    except (OSError, AttributeError):
+        pass
+
     print_startup(PORT)
     tg_token, tg_chat = _ask_telegram()
 
@@ -109,7 +169,7 @@ def main():
         ),
         daemon=True,
     ).start()
-    time.sleep(0.4)
+    time.sleep(0.5)
 
     def _on_url(url):
         clean = url.rstrip("/")
@@ -132,14 +192,15 @@ def main():
 
     BridgeTunnel(PORT, _on_url).start_async()
 
+    # Главный цикл — ждём пока не придёт сигнал завершения
     try:
-        while True:
+        while not _shutdown_event.is_set():
             time.sleep(TUNNEL_KEEPALIVE)
             recent = history.tail(8)
             if recent:
                 print_status_table(recent)
     except KeyboardInterrupt:
-        print("\n{}Мост остановлен.{}\n".format(_DIM, _O))
+        _cleanup()
 
 
 if __name__ == "__main__":
