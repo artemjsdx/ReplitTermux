@@ -1,4 +1,4 @@
-import os, threading, time, getpass
+import os, sys, threading, time, getpass, subprocess
 from pathlib import Path
 
 from installer    import ensure_dependencies
@@ -16,8 +16,7 @@ from display      import (
     print_error, print_status_table,
 )
 
-_BRIDGE_DIR     = Path(__file__).parent.resolve()
-_NONINTERACTIVE = os.environ.get("RT_NONINTERACTIVE", "0") == "1"
+_BRIDGE_DIR = Path(__file__).parent.resolve()
 
 _O   = "\033[0m"
 _DIM = "\033[2m"
@@ -33,17 +32,7 @@ def _ask(prompt, secret=False):
 
 
 def _ask_telegram():
-    if _NONINTERACTIVE:
-        cfg = cfg_load()
-        tok = cfg.get("bot_token", "")
-        cid = cfg.get("chat_id", "")
-        if tok and cid:
-            print("{}[non-interactive] Using saved Telegram config.{}".format(_DIM, _O))
-            return tok, cid
-        print("{}[non-interactive] No Telegram config — skipping.{}".format(_DIM, _O))
-        return None, None
-
-    cfg = cfg_load()
+    cfg         = cfg_load()
     saved_token = cfg.get("bot_token", "")
     saved_chat  = cfg.get("chat_id", "")
     print("{}── Telegram-уведомления ──────────────────{}".format(_DIM, _O))
@@ -80,6 +69,32 @@ def _ask_telegram():
     return bot_token, chat_id
 
 
+def _start_watchdog_background():
+    """Запускает watchdog.py как независимый фоновый процесс (не привязан к терминалу)."""
+    wd = _BRIDGE_DIR / "watchdog.py"
+    if not wd.exists():
+        return
+    # Убиваем старый watchdog если был
+    subprocess.run(
+        "pkill -f 'python.*watchdog\.py' 2>/dev/null; pkill -f 'python3.*watchdog\.py' 2>/dev/null",
+        shell=True,
+    )
+    time.sleep(0.5)
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["RT_NONINTERACTIVE"] = "1"
+    log_handle = open(str(_BRIDGE_DIR / "watchdog.log"), "a", encoding="utf-8")
+    subprocess.Popen(
+        [sys.executable, str(wd)],
+        cwd=str(_BRIDGE_DIR),
+        env=env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,   # отвязываем от текущего терминала
+        close_fds=True,
+    )
+
+
 def main():
     print_startup(PORT)
     tg_token, tg_chat = _ask_telegram()
@@ -99,6 +114,7 @@ def main():
 
     def _on_url(url):
         clean = url.rstrip("/")
+        # Пишем URL чтобы watchdog мог сообщить о нём после авторестарта
         try:
             (_BRIDGE_DIR / "bridge_url.txt").write_text(clean, encoding="utf-8")
         except Exception:
@@ -114,6 +130,8 @@ def main():
                 print_connection_info(clean, TOKEN)
         else:
             print_connection_info(clean, TOKEN)
+        # Запускаем watchdog в фоне ПОСЛЕ того как мост поднялся
+        _start_watchdog_background()
 
     BridgeTunnel(PORT, _on_url).start_async()
 
