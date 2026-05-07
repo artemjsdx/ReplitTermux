@@ -70,13 +70,12 @@ def _ask_telegram():
 
 
 def _start_watchdog_background():
-    """Запускает watchdog.py как независимый фоновый процесс (не привязан к терминалу)."""
+    """Запускает watchdog.py как независимый фоновый процесс."""
     wd = _BRIDGE_DIR / "watchdog.py"
     if not wd.exists():
         return
-    # Убиваем старый watchdog если был
     subprocess.run(
-        "pkill -f 'python.*watchdog\.py' 2>/dev/null; pkill -f 'python3.*watchdog\.py' 2>/dev/null",
+        "pkill -f \"python.*watchdog\\.py\" 2>/dev/null; pkill -f \"python3.*watchdog\\.py\" 2>/dev/null",
         shell=True,
     )
     time.sleep(0.5)
@@ -90,7 +89,7 @@ def _start_watchdog_background():
         env=env,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
-        start_new_session=True,   # отвязываем от текущего терминала
+        start_new_session=True,
         close_fds=True,
     )
 
@@ -114,7 +113,6 @@ def main():
 
     def _on_url(url):
         clean = url.rstrip("/")
-        # Пишем URL чтобы watchdog мог сообщить о нём после авторестарта
         try:
             (_BRIDGE_DIR / "bridge_url.txt").write_text(clean, encoding="utf-8")
         except Exception:
@@ -130,7 +128,6 @@ def main():
                 print_connection_info(clean, TOKEN)
         else:
             print_connection_info(clean, TOKEN)
-        # Запускаем watchdog в фоне ПОСЛЕ того как мост поднялся
         _start_watchdog_background()
 
     BridgeTunnel(PORT, _on_url).start_async()
