@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import datetime
 
 BRIDGE_DIR  = Path(__file__).parent.resolve()
-BRIDGE_PORT = int(os.environ.get("RT_PORT", 7474))
+BRIDGE_PORT = int(os.environ.get("RT_PORT", 9000))
 CTRL_FILE   = BRIDGE_DIR / "control.txt"
 URL_FILE    = BRIDGE_DIR / "bridge_url.txt"
 PID_FILE    = BRIDGE_DIR / "bridge.pid"
