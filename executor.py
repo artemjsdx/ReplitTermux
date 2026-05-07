@@ -14,25 +14,33 @@
       def run(self, cmd: str) -> CommandRecord:
           ts_start = time.time()
           try:
-              proc = subprocess.run(
-                  cmd, shell=True, capture_output=True,
+              result = subprocess.run(
+                  cmd,
+                  shell=True,
+                  capture_output=True,
+                  text=True,
+                  encoding="utf-8",
+                  errors="replace",
                   timeout=self._timeout,
-                  env={**os.environ, "TERM": "xterm-256color"},
               )
-              # Явно декодируем с заменой битых байт — нужно для Android/Termux
-              # где системная кодировка может быть не UTF-8
-              raw = (proc.stdout or b"") + (proc.stderr or b"")
-              out  = raw.decode("utf-8", errors="replace").strip()
-              code = proc.returncode
+              out  = result.stdout
+              err  = result.stderr
+              code = result.returncode
           except subprocess.TimeoutExpired:
-              out, code = f"TIMEOUT ({self._timeout}s)", -1
+              out  = ""
+              err  = f"Command timed out after {self._timeout}s"
+              code = -1
           except Exception as exc:
-              out, code = f"ERROR: {exc}", -2
+              out  = ""
+              err  = str(exc)
+              code = -1
 
+          elapsed = round(time.time() - ts_start, 3)
           return CommandRecord(
               cmd=cmd,
-              out=out,
+              stdout=out,
+              stderr=err,
               code=code,
-              elapsed=round(time.time() - ts_start, 2),
+              elapsed=elapsed,
           )
   
