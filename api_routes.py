@@ -1,10 +1,5 @@
-"""
-api_routes.py — Flask REST API routes.
-S: One responsibility — HTTP layer only; delegates work to executor / history / web_ui.
-I: Routes depend only on the interfaces they need (executor.run, history.append, etc.).
-"""
 from __future__ import annotations
-from pathlib    import Path
+from pathlib import Path
 import time
 
 from flask import Flask, request, jsonify
@@ -15,8 +10,10 @@ from history  import CommandHistory, CommandRecord
 from display  import print_result
 from web_ui   import render_web_ui
 
+_BRIDGE_DIR = Path(__file__).parent.resolve()
 
-def _auth_ok() -> bool:
+
+def _auth_ok():
     t = request.headers.get("X-Token") or request.args.get("token", "")
     return t == TOKEN
 
@@ -25,7 +22,7 @@ def _deny():
     return jsonify({"error": "Unauthorized — X-Token header required"}), 401
 
 
-def create_app(executor: ShellExecutor, history: CommandHistory) -> Flask:
+def create_app(executor, history):
     app = Flask(__name__)
 
     import logging
@@ -42,8 +39,7 @@ def create_app(executor: ShellExecutor, history: CommandHistory) -> Flask:
         data = request.get_json(silent=True) or {}
         cmd  = str(data.get("cmd", "")).strip()
         if not cmd:
-            return jsonify({"error": "поле 'cmd' обязательно"}), 400
-
+            return jsonify({"error": "поле cmd обязательно"}), 400
         record = executor.run(cmd)
         history.append(record)
         print_result(record)
@@ -64,7 +60,7 @@ def create_app(executor: ShellExecutor, history: CommandHistory) -> Flask:
         path    = data.get("path", "")
         content = data.get("content", "")
         if not path:
-            return jsonify({"error": "поле 'path' обязательно"}), 400
+            return jsonify({"error": "поле path обязательно"}), 400
         try:
             p = Path(path).expanduser()
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +81,38 @@ def create_app(executor: ShellExecutor, history: CommandHistory) -> Flask:
             return jsonify({"path": path, "content": content})
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
+
+    @app.route("/ctrl", methods=["POST"])
+    def ctrl():
+        if not _auth_ok():
+            return _deny()
+        data = request.get_json(silent=True) or {}
+        cmd  = str(data.get("cmd", "")).strip().upper()
+        if cmd not in ("RESTART", "UPDATE", "STOP"):
+            return jsonify({"error": "Unknown cmd", "allowed": ["RESTART","UPDATE","STOP"]}), 400
+        try:
+            (_BRIDGE_DIR / "control.txt").write_text(cmd, encoding="utf-8")
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+        return jsonify({"ok": True, "cmd": cmd, "msg": "Signal written — watchdog acts in ~12s"})
+
+    @app.route("/status")
+    def status():
+        if not _auth_ok():
+            return _deny()
+        url_file = _BRIDGE_DIR / "bridge_url.txt"
+        url = url_file.read_text(encoding="utf-8").strip() if url_file.exists() else "unknown"
+        wd_log = _BRIDGE_DIR / "watchdog.log"
+        wd_tail = ""
+        if wd_log.exists():
+            lines = wd_log.read_text(encoding="utf-8").splitlines()
+            wd_tail = "\n".join(lines[-10:])
+        return jsonify({
+            "ok": True,
+            "bridge_url": url,
+            "history_len": len(history),
+            "watchdog_tail": wd_tail,
+        })
 
     @app.route("/")
     def web():
