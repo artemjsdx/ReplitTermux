@@ -1,9 +1,5 @@
-"""
-main.py — Entry point and orchestrator.
-S: Wires components together; does not contain business logic itself.
-D: All dependencies constructed here and injected into consumers.
-"""
-import threading, time, getpass
+import os, threading, time, getpass
+from pathlib import Path
 
 from installer    import ensure_dependencies
 ensure_dependencies()
@@ -20,6 +16,9 @@ from display      import (
     print_error, print_status_table,
 )
 
+_BRIDGE_DIR     = Path(__file__).parent.resolve()
+_NONINTERACTIVE = os.environ.get("RT_NONINTERACTIVE", "0") == "1"
+
 _O   = "\033[0m"
 _DIM = "\033[2m"
 _GRN = "\033[92m"
@@ -28,68 +27,61 @@ _RED = "\033[91m"
 _ORG = "\033[38;5;208m"
 
 
-def _ask(prompt: str, secret: bool = False) -> str:
-    print(f"{_ORG}{prompt}{_O}", end=" ", flush=True)
+def _ask(prompt, secret=False):
+    print("{}{}{}".format(_ORG, prompt, _O), end=" ", flush=True)
     return getpass.getpass("") if secret else input()
 
 
-def _ask_telegram() -> tuple[str, str] | tuple[None, None]:
+def _ask_telegram():
+    if _NONINTERACTIVE:
+        cfg = cfg_load()
+        tok = cfg.get("bot_token", "")
+        cid = cfg.get("chat_id", "")
+        if tok and cid:
+            print("{}[non-interactive] Using saved Telegram config.{}".format(_DIM, _O))
+            return tok, cid
+        print("{}[non-interactive] No Telegram config — skipping.{}".format(_DIM, _O))
+        return None, None
+
     cfg = cfg_load()
     saved_token = cfg.get("bot_token", "")
     saved_chat  = cfg.get("chat_id", "")
-
-    print(f"{_DIM}── Telegram-уведомления ──────────────────{_O}")
+    print("{}── Telegram-уведомления ──────────────────{}".format(_DIM, _O))
 
     if saved_token and saved_chat:
-        print(f"{_GRN}Сохранённый чат: {saved_chat}{_O}")
-        print(f"{_DIM}Enter — использовать сохранённое, или введи новые данные.{_O}\n")
-
+        print("{}Сохранённый чат: {}{}".format(_GRN, saved_chat, _O))
+        print("{}Enter — использовать сохранённое.{}\n".format(_DIM, _O))
         new_chat = _ask("Chat ID [сохранённый]:")
         if not new_chat.strip():
-            # используем сохранённое
             return saved_token, saved_chat
-
-        # введён новый chat_id — спросим и токен
-        new_token = _ask("Bot token:", secret=True).strip()
-        if not new_token:
-            new_token = saved_token   # токен оставляем старый
-
+        new_token = _ask("Bot token:", secret=True).strip() or saved_token
         try:
             chat_id = normalize_chat_id(new_chat)
         except ValueError as e:
-            print(f"{_RED}✗ {e}{_O}\n")
+            print("{}✗ {}{}\n".format(_RED, e, _O))
             return None, None
-
         cfg_save({"bot_token": new_token, "chat_id": chat_id})
-        print(f"{_GRN}✓ Сохранено. chat_id: {chat_id}{_O}\n")
         return new_token, chat_id
 
-    # нет сохранённых данных
-    print(f"{_DIM}(Enter чтобы пропустить){_O}\n")
+    print("{}(Enter чтобы пропустить){}\n".format(_DIM, _O))
     bot_token = _ask("Bot token:", secret=True).strip()
     if not bot_token:
-        print(f"{_DIM}Telegram пропущен.{_O}\n")
+        print("{}Telegram пропущен.{}\n".format(_DIM, _O))
         return None, None
-
     chat_id_raw = _ask("Chat ID:")
     if not chat_id_raw.strip():
-        print(f"{_DIM}Telegram пропущен.{_O}\n")
         return None, None
-
     try:
         chat_id = normalize_chat_id(chat_id_raw)
     except ValueError as e:
-        print(f"{_RED}✗ {e}{_O}\n")
+        print("{}✗ {}{}\n".format(_RED, e, _O))
         return None, None
-
     cfg_save({"bot_token": bot_token, "chat_id": chat_id})
-    print(f"{_GRN}✓ Сохранено. chat_id: {chat_id}{_O}\n")
     return bot_token, chat_id
 
 
-def main() -> None:
+def main():
     print_startup(PORT)
-
     tg_token, tg_chat = _ask_telegram()
 
     history  = CommandHistory(max_size=MAX_HISTORY)
@@ -105,17 +97,20 @@ def main() -> None:
     ).start()
     time.sleep(0.4)
 
-    def _on_url(url: str) -> None:
+    def _on_url(url):
         clean = url.rstrip("/")
-
+        try:
+            (_BRIDGE_DIR / "bridge_url.txt").write_text(clean, encoding="utf-8")
+        except Exception:
+            pass
         if tg_token and tg_chat:
-            print(f"{_DIM}Отправляю в Telegram...{_O}")
+            print("{}Отправляю в Telegram...{}".format(_DIM, _O))
             ok, err = send_bridge_notifications(tg_token, tg_chat, clean, TOKEN)
             if ok:
-                print(f"{_GRN}✓ Telegram: 2 сообщения отправлены{_O}")
+                print("{}✓ Telegram отправлен{}".format(_GRN, _O))
                 print_bridge_ready()
             else:
-                print(f"{_RED}✗ Telegram: {err}{_O}")
+                print("{}✗ Telegram: {}{}".format(_RED, err, _O))
                 print_connection_info(clean, TOKEN)
         else:
             print_connection_info(clean, TOKEN)
@@ -129,7 +124,7 @@ def main() -> None:
             if recent:
                 print_status_table(recent)
     except KeyboardInterrupt:
-        print(f"\n{_DIM}Мост остановлен.{_O}\n")
+        print("\n{}Мост остановлен.{}\n".format(_DIM, _O))
 
 
 if __name__ == "__main__":
