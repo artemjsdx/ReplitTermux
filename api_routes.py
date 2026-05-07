@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-import time
+import time, logging
 
 from flask import Flask, request, jsonify
 
@@ -19,14 +19,21 @@ def _auth_ok():
 
 
 def _deny():
-    return jsonify({"error": "Unauthorized — X-Token header required"}), 401
+    return jsonify({"error": "Unauthorized -- X-Token header required"}), 401
 
 
 def create_app(executor, history):
     app = Flask(__name__)
 
-    import logging
+    # Suppress all Flask/Werkzeug startup and request logs
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    app.logger.setLevel(logging.ERROR)
+    app.config["JSON_AS_ASCII"] = False
+    try:
+        import flask.cli
+        flask.cli.show_server_banner = lambda *a, **kw: None
+    except Exception:
+        pass
 
     @app.route("/ping")
     def ping():
@@ -53,7 +60,7 @@ def create_app(executor, history):
         return jsonify([r.to_dict() for r in history.tail(n)])
 
     @app.route("/upload", methods=["POST"])
-    def upload():
+    def upload_file():
         if not _auth_ok():
             return _deny()
         data    = request.get_json(silent=True) or {}
@@ -94,7 +101,7 @@ def create_app(executor, history):
             (_BRIDGE_DIR / "control.txt").write_text(cmd, encoding="utf-8")
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
-        return jsonify({"ok": True, "cmd": cmd, "msg": "Signal written — watchdog acts in ~12s"})
+        return jsonify({"ok": True, "cmd": cmd, "msg": "Signal written -- watchdog acts in ~15s"})
 
     @app.route("/status")
     def status():
