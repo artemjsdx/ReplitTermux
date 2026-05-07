@@ -1,7 +1,6 @@
 """
 executor.py — Shell command execution.
 S: One responsibility — run shell commands and return structured results.
-I: Executor protocol can be swapped (e.g. for sandboxed execution).
 """
 import os, subprocess, time
 from history import CommandRecord
@@ -23,23 +22,22 @@ class ShellExecutor:
                 errors="replace",
                 timeout=self._timeout,
             )
-            out  = result.stdout
-            err  = result.stderr
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
+            # Combine: stdout first, then stderr if non-empty
+            out  = stdout + (("\n" + stderr) if stderr.strip() else "")
             code = result.returncode
         except subprocess.TimeoutExpired:
-            out  = ""
-            err  = f"Command timed out after {self._timeout}s"
+            out  = f"Command timed out after {self._timeout}s"
             code = -1
         except Exception as exc:
-            out  = ""
-            err  = str(exc)
+            out  = str(exc)
             code = -1
 
         elapsed = round(time.time() - ts_start, 3)
         return CommandRecord(
             cmd=cmd,
-            stdout=out,
-            stderr=err,
+            out=out,
             code=code,
             elapsed=elapsed,
         )
