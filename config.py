@@ -1,10 +1,10 @@
 import os, uuid, json
 from pathlib import Path
 
-PORT            = int(os.environ.get("RT_PORT", 7474))
-MAX_HISTORY     = int(os.environ.get("RT_MAX_HISTORY", 200))
-CMD_TIMEOUT     = int(os.environ.get("RT_CMD_TIMEOUT", 60))
-TUNNEL_KEEPALIVE= int(os.environ.get("RT_TUNNEL_KEEPALIVE", 30))
+PORT             = int(os.environ.get("RT_PORT", 9000))
+MAX_HISTORY      = int(os.environ.get("RT_MAX_HISTORY", 200))
+CMD_TIMEOUT      = int(os.environ.get("RT_CMD_TIMEOUT", 60))
+TUNNEL_KEEPALIVE = int(os.environ.get("RT_TUNNEL_KEEPALIVE", 30))
 
 # Token persisted across restarts so the agent always uses the same token
 _TOKEN_FILE = Path.home() / ".replittermux.token"
