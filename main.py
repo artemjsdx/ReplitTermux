@@ -1,4 +1,4 @@
-import os, sys, signal, threading, time, getpass, subprocess
+import os, sys, signal, threading, time, getpass, subprocess, socket
 from pathlib import Path
 
 from installer    import ensure_dependencies
@@ -24,10 +24,37 @@ _GRN = "\033[92m"
 _RED = "\033[91m"
 _ORG = "\033[38;5;208m"
 
-# Глобальный реестр дочерних процессов для cleanup
 _watchdog_proc: "subprocess.Popen | None" = None
 _tunnel_proc:   "subprocess.Popen | None" = None
 _shutdown_event = threading.Event()
+
+
+def _is_port_free(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("0.0.0.0", port))
+        return True
+    except OSError:
+        return False
+
+
+def _free_port(port: int) -> None:
+    """Убивает все процессы занимающие порт port."""
+    subprocess.run(f"fuser -k {port}/tcp 2>/dev/null", shell=True)
+    time.sleep(0.6)
+
+
+def _kill_watchdog() -> None:
+    subprocess.run(
+        "pkill -f \"python.*watchdog\\.py\" 2>/dev/null;"
+        " pkill -f \"python3.*watchdog\\.py\" 2>/dev/null",
+        shell=True,
+    )
+    if _watchdog_proc is not None:
+        try:
+            _watchdog_proc.terminate()
+        except Exception:
+            pass
 
 
 def _ask(prompt, secret=False):
@@ -39,6 +66,12 @@ def _ask_telegram():
     cfg         = cfg_load()
     saved_token = cfg.get("bot_token", "")
     saved_chat  = cfg.get("chat_id", "")
+
+    # Неинтерактивный режим (запуск из watchdog/скрипта)
+    noninteractive = os.environ.get("RT_NONINTERACTIVE", "")
+    if noninteractive:
+        return (saved_token or None), (saved_chat or None)
+
     print("{}── Telegram-уведомления ──────────────────{}".format(_DIM, _O))
 
     if saved_token and saved_chat:
@@ -74,12 +107,10 @@ def _ask_telegram():
 
 
 def _start_watchdog_background():
-    """Запускает watchdog.py как независимый процесс (отвязан от терминала)."""
     global _watchdog_proc
     wd = _BRIDGE_DIR / "watchdog.py"
     if not wd.exists():
         return
-    # Убиваем предыдущий watchdog
     subprocess.run(
         "pkill -f \"python.*watchdog\\.py\" 2>/dev/null;"
         " pkill -f \"python3.*watchdog\\.py\" 2>/dev/null",
@@ -101,25 +132,12 @@ def _start_watchdog_background():
 
 
 def _cleanup(signum=None, frame=None):
-    """Корректное завершение: убиваем watchdog, туннель, освобождаем порт."""
     if _shutdown_event.is_set():
-        return   # уже выполняется
+        return
     _shutdown_event.set()
     print("\n{}Завершение...{}".format(_DIM, _O))
 
-    # 1. Останавливаем watchdog — иначе он перезапустит мост
-    subprocess.run(
-        "pkill -f \"python.*watchdog\\.py\" 2>/dev/null;"
-        " pkill -f \"python3.*watchdog\\.py\" 2>/dev/null",
-        shell=True,
-    )
-    if _watchdog_proc is not None:
-        try:
-            _watchdog_proc.terminate()
-        except Exception:
-            pass
-
-    # 2. Убиваем туннель (serveo ssh-процесс)
+    _kill_watchdog()
     subprocess.run("pkill -f \"ssh.*serveo\" 2>/dev/null", shell=True)
     if _tunnel_proc is not None:
         try:
@@ -127,13 +145,8 @@ def _cleanup(signum=None, frame=None):
         except Exception:
             pass
 
-    # 3. Освобождаем порт принудительно
-    subprocess.run(
-        "fuser -k {}/tcp 2>/dev/null".format(PORT),
-        shell=True,
-    )
+    _free_port(PORT)
 
-    # 4. Удаляем bridge_url.txt чтобы watchdog не думал что мост жив
     try:
         (_BRIDGE_DIR / "bridge_url.txt").unlink(missing_ok=True)
     except Exception:
@@ -144,10 +157,8 @@ def _cleanup(signum=None, frame=None):
 
 
 def main():
-    # Регистрируем обработчики сигналов
-    signal.signal(signal.SIGINT,  _cleanup)   # Ctrl+C
-    signal.signal(signal.SIGTERM, _cleanup)   # kill / watchdog SIGTERM
-    # SIGTSTP (Ctrl+Z) — показываем предупреждение вместо suspend
+    signal.signal(signal.SIGINT,  _cleanup)
+    signal.signal(signal.SIGTERM, _cleanup)
     try:
         signal.signal(signal.SIGTSTP, lambda s, f: print(
             "\n{}Ctrl+Z отключён — используй Ctrl+C для остановки.{}".format(_ORG, _O)
@@ -158,18 +169,43 @@ def main():
     print_startup(PORT)
     tg_token, tg_chat = _ask_telegram()
 
+    # ── Освобождаем порт перед стартом ────────────────────────────────────────
+    if not _is_port_free(PORT):
+        print("{}Порт {} занят — освобождаю...{}".format(_DIM, PORT, _O))
+        _kill_watchdog()
+        _free_port(PORT)
+        if not _is_port_free(PORT):
+            print("{}✗ Не удалось освободить порт {}. Попробуй вручную: fuser -k {}/tcp{}".format(
+                _RED, PORT, PORT, _O))
+            sys.exit(1)
+        print("{}✓ Порт {} свободен{}".format(_GRN, PORT, _O))
+
     history  = CommandHistory(max_size=MAX_HISTORY)
     executor = ShellExecutor(timeout=CMD_TIMEOUT)
     app      = create_app(executor, history)
 
-    threading.Thread(
-        target=lambda: app.run(
-            host="0.0.0.0", port=PORT, debug=False,
-            use_reloader=False, threaded=True,
-        ),
-        daemon=True,
-    ).start()
-    time.sleep(0.5)
+    print("{}Запускаю Flask-сервер на порту {}...{}".format(_DIM, PORT, _O), flush=True)
+    flask_error: list[str] = []
+
+    def _run_flask():
+        try:
+            app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False, threaded=True)
+        except Exception as e:
+            flask_error.append(str(e))
+
+    threading.Thread(target=_run_flask, daemon=True).start()
+    time.sleep(0.8)
+
+    if flask_error:
+        print("{}✗ Flask не запустился: {}{}".format(_RED, flask_error[0], _O))
+        sys.exit(1)
+
+    if not _is_port_free(PORT) is False and not _check_flask_alive(PORT):
+        # Если порт НЕ был занят, но Flask не отвечает — ошибка
+        pass  # пропускаем; Flask мог стартовать нормально
+
+    print("{}✓ Сервер запущен — localhost:{}{}".format(_GRN, PORT, _O))
+    print("{}Устанавливаю туннель serveo.net...{}".format(_DIM, _O), flush=True)
 
     def _on_url(url):
         clean = url.rstrip("/")
@@ -192,7 +228,6 @@ def main():
 
     BridgeTunnel(PORT, _on_url).start_async()
 
-    # Главный цикл — ждём пока не придёт сигнал завершения
     try:
         while not _shutdown_event.is_set():
             time.sleep(TUNNEL_KEEPALIVE)
@@ -203,5 +238,10 @@ def main():
         _cleanup()
 
 
-if __name__ == "__main__":
-    main()
+def _check_flask_alive(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+    except Exception:
+        return False
