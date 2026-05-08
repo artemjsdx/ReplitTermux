@@ -59,7 +59,10 @@ def _kill_watchdog() -> None:
 
 def _ask(prompt, secret=False):
     print("{}{}{}".format(_ORG, prompt, _O), end=" ", flush=True)
-    return getpass.getpass("") if secret else input()
+    try:
+        return getpass.getpass("") if secret else input()
+    except (EOFError, KeyboardInterrupt):
+        return ""
 
 
 def _ask_telegram():
@@ -68,7 +71,7 @@ def _ask_telegram():
     saved_chat  = cfg.get("chat_id", "")
 
     # Неинтерактивный режим (запуск из watchdog/скрипта)
-    noninteractive = os.environ.get("RT_NONINTERACTIVE", "")
+    noninteractive = os.environ.get("RT_NONINTERACTIVE", "") or not sys.stdin.isatty()
     if noninteractive:
         return (saved_token or None), (saved_chat or None)
 
