@@ -205,7 +205,7 @@ def main():
         pass  # пропускаем; Flask мог стартовать нормально
 
     print("{}✓ Сервер запущен — localhost:{}{}".format(_GRN, PORT, _O))
-    print("{}Устанавливаю туннель serveo.net...{}".format(_DIM, _O), flush=True)
+    print("{}Устанавливаю туннель cloudflare...{}".format(_DIM, _O), flush=True)
 
     def _on_url(url):
         clean = url.rstrip("/")
