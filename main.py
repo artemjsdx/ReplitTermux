@@ -61,7 +61,7 @@ def _ask(prompt, secret=False):
     print("{}{}{}".format(_ORG, prompt, _O), end=" ", flush=True)
     try:
         return getpass.getpass("") if secret else input()
-    except (EOFError, KeyboardInterrupt):
+    except (EOFError, KeyboardInterrupt, OSError):
         return ""
 
 
