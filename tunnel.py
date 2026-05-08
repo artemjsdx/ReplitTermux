@@ -1,12 +1,12 @@
 """
-tunnel.py — SSH tunnel management (serveo.net / localhost.run fallback).
+tunnel.py — Tunnel management: Cloudflare (primary) → localhost.run (fallback).
 S:  One responsibility — establish public tunnel and report URL.
 O:  New providers can be added by subclassing TunnelProvider.
-L:  ServeoTunnel and LocalhostRunTunnel are substitutable.
+L:  All TunnelProvider subclasses are substitutable.
 D:  BridgeTunnel depends on TunnelProvider abstraction.
 """
 from __future__ import annotations
-import subprocess, threading
+import re, subprocess, threading
 from abc import ABC, abstractmethod
 from typing import Callable
 
@@ -21,24 +21,26 @@ class TunnelProvider(ABC):
     def start(self, port: int, on_url: UrlCallback) -> None: ...
 
 
-class ServeoTunnel(TunnelProvider):
+class CloudflareTunnel(TunnelProvider):
+    """
+    Uses `cloudflared tunnel --url` (Quick Tunnel — no account needed).
+    Install on Termux: pkg install cloudflared
+    """
     def start(self, port: int, on_url: UrlCallback) -> None:
-        cmd = [
-            "ssh", "-o", "StrictHostKeyChecking=no",
-            "-o", f"ServerAliveInterval=30",
-            "-R", f"80:localhost:{port}", "serveo.net",
-        ]
+        cmd = ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"]
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
+        _URL_RE = re.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
         for line in proc.stdout:  # type: ignore[union-attr]
-            line = line.strip()
-            if "Forwarding HTTP" in line or "https://" in line or "http://" in line:
-                for part in line.split():
-                    if part.startswith("http"):
-                        on_url(part)
-                        return
+            m = _URL_RE.search(line)
+            if m:
+                on_url(m.group(0))
+                return
 
 
 class LocalhostRunTunnel(TunnelProvider):
@@ -74,7 +76,7 @@ class BridgeTunnel:
     ) -> None:
         self._port      = port
         self._on_url    = on_url
-        self._providers = providers or [ServeoTunnel(), LocalhostRunTunnel()]
+        self._providers = providers or [CloudflareTunnel(), LocalhostRunTunnel()]
 
     def start_async(self) -> None:
         threading.Thread(target=self._run, daemon=True).start()
